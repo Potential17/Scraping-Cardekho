@@ -1,74 +1,89 @@
-import requests
 from bs4 import BeautifulSoup
+from requests import get
 import pandas as pd
-import numpy as np
-import re
+import time
+import random
+headers = ({'User-Agent':
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_6) AppleWebKit\
+/537.36 (KHTML, like Gecko) Chrome/56.0.2924.87 Safari/537.36'})
+
+def get_basic_info(content_list):
+    basic_info = []
+    for item in content_list:
+        basic_info.append(item.find_all('div', attrs={'class': 'car-ad-info'}))
+    return basic_info
+
+def get_names(basic_info):
+    names = []
+    for item in basic_info:
+        for i in item:
+            names.append(i.find_all("h2", attrs = {"class" : "car-ad-name"})[0].text.strip())
+    return names
+
+def get_years(basic_info):
+    years = []
+    for item in basic_info:
+        for i in item:
+            years.append(i.find_all("h3", attrs = {"class" : "car-ad-year"})[0].text.strip())
+    return years
+
+def get_prices(basic_info):
+    prices = []
+    for item in basic_info:
+        for i in item:
+            prices.append(i.find_all("div", attrs = {"class" : "car-ad-price"})[0].string.replace(u'\xa0', u' ').strip())
+    return prices
+
+def get_motor(basic_info):
+    tables = []
+    motors = []
+    mileages = []
+    data = [motors, mileages]
+    for item in basic_info:
+        for i in item:
+            tables.append(i.find_all("table", attrs = {"class" : "used-specs-table"})[0])
+    for table in tables:
+        motors.append(table.find("td", attrs={"class" : "car-ad-cc"}).string)
+        mileages.append(table.find("td", attrs={"class" : "car-ad-km"}).string)
+    return data
+
+page_number = 1
+names = []
+prices = []
+years = []
+motors = []
+mileages = []
 
 
-def process_new(car_id):
+for i in range(9):
+    base_url = "https://www.cardekho.com/newcars".format(page_number)
+    response = get(base_url, headers=headers)
+    html_soup = BeautifulSoup(response.text, 'html.parser')
+    content_list = html_soup.find_all('div', attrs={'class': 'car-ad sft-ad'})
 
-    
-    # The first section is the same as process_new().
-    url = 'https://www.cardekho.com/used-cars+in+bangalore?ID=' + car_id
-    response = get(url)
-    page_html = BeautifulSoup(response.text,'html.parser')
-    page_title = page_html.find('title').text
-    try:
-        main_left = page_html.find('div', attrs = {'id':'main_left'})
-    except:
-        None
-    
+    basic_info = get_basic_info(content_list)
+    names1 = get_names(basic_info)
+    prices1 = get_prices(basic_info)
+    years1 = get_years(basic_info)
+    motors1 = get_motor(basic_info)[0]
+    mileages1 = get_motor(basic_info)[1]
 
-    if(page_title != 'Buy Used Car & Used Vehicle & Used Cars Bangalore - Cardekho.com' and
-    str(main_left.find('strong', text = 'Availability').find_parent('tr').find_all('td')[1].text.replace('\n','')) == 'Available'): 
+    names.extend(names1)
+    prices.extend(prices1)
+    years.extend(years1)
+    motors.extend(motors1)
+    mileages.extend(mileages1)
+    page_number = page_number + 1
+    time.sleep(random.randint(1,2))
 
+cols = ["Name", "Year", "Motor", "Mileage (Km)", "Price"]
+data = pd.DataFrame({"Name" : names, "Year" : years, "Motor" : motors, "Mileage (Km)": mileages, "Price" : prices})[cols]
+data["Price"] = data["Price"].replace({'\$ ':''}, regex = True)
+data["Price"] = data["Price"].replace({'\,':''}, regex = True)
+data["Mileage (Km)"] = data["Mileage (Km)"].replace({'\ Km':''}, regex = True)
+data[["Mileage (Km)", "Year", "Motor", "Price"]] = data[["Mileage (Km)", "Year", "Motor", "Price"]].apply(pd.to_numeric)
 
-    # Here we obtain the vehicle's availability status. 
-    try:
-        avail = str(main_left.find('strong', text = 'Availability').find_parent('tr').find_all('td')[1].text.replace('\n',''))
-    except:
-        avail = None
-    
-    # We initialise a date_sold variable prior to the following if statement.
-    date_sold = 0
-    
-    if avail == 'SOLD':
-        try:
-            updated = main_left.find('div', id = 'usedcar_postdate').text
-            updated = re.findall(r"(?<=Updated on: )\w+-\w+-\w+",updated)[0]
-            updated = datetime.strptime(updated,'%d-%b-%Y').date()
-            date_today = datetime.now().date()
-            if updated < date_today:
-                date_sold = updated
-            else:
-                date_sold = date_today
-        except:
-            date_sold = datetime.now().date()
-
-        return([date_sold, int(car_id)])
-    
-    # Else if the vehicle is still available for sale, we will update all of its details.   
-    elif avail == 'Available':
-
-
-
-# 1. Make and Model - e.g. Toyota Vios
-        make_model = page_html.find('a', class_ = 'link_redbanner').text
-
-        # 2. Price
-        try:
-            price = int(main_left.find('strong', text = 'Price').find_parent('tr').find_all('strong')[1].text.replace('$','').replace(',',''))
-        except:
-            price = 0
-
-        # 3. Vehicle Type - e.g. 'Sports Car', 'Luxury Sedan'. Each car can only have one vehicle type.
-        try:
-            veh_type = main_left.find('strong', text = 'Type of Veh').find_parent('tr').find_all('td')[1].text
-        except:
-            veh_type = ''
-
-
-
-        return([int(car_id), avail, make_model, price, veh_type])
-    else:
-        return None
+data.head()
+data.drop_duplicates().to_excel('Car_list.xls')
+#Some filters
+#data.loc[(data["Price"] < 50000000) & (data["Motor"] == 1200)].drop_duplicates()
